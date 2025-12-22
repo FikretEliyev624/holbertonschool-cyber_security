@@ -1,2 +1,2 @@
 #!/bin/bash
-ss -tunlp
+sudo ss -antp
