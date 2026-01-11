@@ -1,1 +1,1 @@
-ip && !(tcp || udp || icmp)
+ip.proto == 1
