@@ -1,13 +1,2 @@
 #!/bin/bash
-
-# Verify RGUMENT
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 {xor}base64_string"
-    exit 1
-fi
-
-#  Extract code
-encoded=${1#"{xor}"}
-
-# Decode base64
-echo "$encoded" | base64 -d | perl -pe 's/(.)/chr(ord($1) ^ 0x5F)/ge'
+python3 -c "from base64 import b64decode; print(bytes(byte ^ 0x5f for byte in b64decode('$1'.replace('{xor}', ''))).decode('utf-8'))"
