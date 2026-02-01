@@ -1,1 +1,1 @@
-<?php readfile('FLAG_2.txt') ?>
+<?php readfile('FLAG_3.txt') ?>
