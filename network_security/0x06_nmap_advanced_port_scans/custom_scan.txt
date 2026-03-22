@@ -1,0 +1,8 @@
+# Nmap 7.98 scan initiated Sun Mar 22 19:22:24 2026 as: /usr/lib/nmap/nmap --scanflags -p80-90 -oN custom_scan.txt www.holbertonschool.com
+Nmap scan report for www.holbertonschool.com (198.202.211.1)
+Host is up (0.00096s latency).
+Other addresses for www.holbertonschool.com (not scanned): 2620:cb:2000::1
+All 1000 scanned ports on www.holbertonschool.com (198.202.211.1) are in ignored states.
+Not shown: 1000 filtered tcp ports (no-response)
+
+# Nmap done at Sun Mar 22 19:22:29 2026 -- 1 IP address (1 host up) scanned in 4.93 seconds
