@@ -1,12 +1,4 @@
-# 🛡️ SPRINT II — TECHNICAL EVALUATION CHEATSHEET
-
-> Holberton Cybersecurity — Sprint II Final Exam
-> Scope: Active Directory · Web Application Attacks · Log Analysis
-> Qeyd: Yalnız təlim / icazəli lab mühitlərində istifadə üçün.
-
----
-
-## 🔗 FAYDALI LİNKLƏR (CTF köməkçiləri)
+https://notepad-plum.vercel.app/auth
 
 **Sənin verdiyin:**
 - https://gtfobins.github.io/ — Linux binary-ləri ilə priv-esc / GTFOBins (sənin yazdığın `.org` → əsl ünvan budur)
